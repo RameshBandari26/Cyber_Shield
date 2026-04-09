@@ -548,100 +548,209 @@ tr:nth-child(even){{background:#f5f5f5}}tr:hover{{background:#fffacc}}
 #   580 – 3 action btns  (~40 px)
 # =============================================================
 
-bg_img    = Image.open("image.jpg").resize((1300, 950), Image.LANCZOS)
-bg_img_tk = ImageTk.PhotoImage(bg_img)
-bg_label  = Label(main, image=bg_img_tk)
-bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+# bg_img    = Image.open("image.jpg").resize((1300, 950), Image.LANCZOS)
+# bg_img_tk = ImageTk.PhotoImage(bg_img)
+# bg_label  = Label(main, image=bg_img_tk)
+# bg_label.place(x=0, y=0, relwidth=1, relheight=1)
 
-main.geometry("1300x950")          # shrink window to match content
+# main.geometry("1300x950")    
 
-font  = ('times', 14, 'bold')
-font1 = ('times', 12, 'bold')
-font2 = ('times', 11, 'bold')
+# font  = ('times', 14, 'bold')
+# font1 = ('times', 12, 'bold')
+# font2 = ('times', 11, 'bold')
 
 # ── Title ─────────────────────────────────────────────────────── y=5
+# title = Label(main,
+#               text='REAL-TIME CYBER THREAT DETECTION SYSTEM\n'
+#                    'Using Autoencoder, Random Forest and MLP',
+#               bg='greenyellow', fg='dodger blue', font=font,
+#               height=2, width=140)
+# title.place(x=0, y=5)
+
+# # ── Main output text box ──────────────────────────────────────── y=75
+# text = Text(main, height=13, width=152, font=font1)
+# scroll = Scrollbar(main, orient=VERTICAL, command=text.yview)
+# text.configure(yscrollcommand=scroll.set)
+# text.place(x=10, y=75)
+# scroll.place(x=1281, y=75, height=215)
+
+# # ── Algorithm buttons – Row 1 ─────────────────────────────────── y=300
+# Button(main, text="Upload Dataset",
+#        command=uploadDataset, font=font2).place(x=10, y=300)
+
+# Button(main, text="Preprocess Dataset",
+#        command=preprocessing, font=font2).place(x=200, y=300)
+
+# Button(main, text="Run AutoEncoder",
+#        command=lambda: threading.Thread(
+#            target=runAutoEncoder, daemon=True).start(),
+#        font=font2).place(x=420, y=300)
+
+# Button(main, text="Run Random Forest",
+#        command=runRandomForest, font=font2).place(x=620, y=300)
+
+# Button(main, text="Run MLP",
+#        command=runMLP, font=font2).place(x=850, y=300)
+
+# # ── Algorithm buttons – Row 2 ─────────────────────────────────── y=345
+# Button(main, text="Detection & Attribute Attack Type",
+#        command=attackAttributeDetection, font=font2).place(x=10, y=345)
+
+# Button(main, text="Comparison Graph",
+#        command=showGraphSelection, font=font2).place(x=420, y=345)
+
+# Button(main, text="Comparison Table",
+#        command=comparisonTable, font=font2).place(x=700, y=345)
+
+# # ── Real-Time Detection Log header ────────────────────────────── y=395
+# Label(main,
+#       text="  ⚡ Real-Time Detection Log  —  threats show in RED, safe traffic in GREEN",
+#       bg='#001133', fg='#00ccff',
+#       font=('times', 11, 'bold'),
+#       anchor='w', width=140).place(x=10, y=395)
+
+# # ── Log text box ──────────────────────────────────────────────── y=425
+# log_text = Text(main, height=8, width=152,
+#                 font=('Courier', 10),
+#                 bg='#050510', fg='#00ff88',
+#                 insertbackground='white',
+#                 relief=SUNKEN, bd=2,
+#                 state=DISABLED)
+# log_scroll = Scrollbar(main, orient=VERTICAL, command=log_text.yview)
+# log_text.configure(yscrollcommand=log_scroll.set)
+# log_text.place(x=10, y=425)
+# log_scroll.place(x=1281, y=425, height=145)
+
+# # ── Three action buttons ──────────────────────────────────────── y=580
+# monitor_button = Button(main,
+#                         text="▶  Start Monitoring",
+#                         command=start_monitoring,
+#                         font=('times', 12, 'bold'),
+#                         bg='#007700', fg='white',
+#                         width=20, relief=RAISED, bd=3)
+# monitor_button.place(x=10, y=580)
+
+# Button(main,
+#        text="💾  Save Detection Log",
+#        command=save_detection_log,
+#        font=('times', 12, 'bold'),
+#        bg='#0055bb', fg='white',
+#        width=20, relief=RAISED, bd=3).place(x=280, y=580)
+
+# Button(main,
+#        text="🗑  Clear Log",
+#        command=clear_detection_log,
+#        font=('times', 12, 'bold'),
+#        bg='#994400', fg='white',
+#        width=14, relief=RAISED, bd=3).place(x=550, y=580)
+
+# main.mainloop()
+
+
+# =============================================================
+#  MODERN UI DESIGN
+# =============================================================
+
+main.geometry("1300x900")
+main.configure(bg="#0b132b")
+
 title = Label(main,
-              text='REAL-TIME CYBER THREAT DETECTION SYSTEM\n'
-                   'Using Autoencoder, Random Forest and MLP',
-              bg='greenyellow', fg='dodger blue', font=font,
-              height=2, width=140)
-title.place(x=0, y=5)
+              text="CYBERSHIELD - REAL-TIME CYBER THREAT DETECTION",
+              bg="#1c2541", fg="#5bc0be",
+              font=('times', 18, 'bold'),
+              height=2)
+title.pack(fill=X)
 
-# ── Main output text box ──────────────────────────────────────── y=75
-text = Text(main, height=13, width=152, font=font1)
-scroll = Scrollbar(main, orient=VERTICAL, command=text.yview)
-text.configure(yscrollcommand=scroll.set)
-text.place(x=10, y=75)
-scroll.place(x=1281, y=75, height=215)
+# ================= MAIN OUTPUT =================
+frame_top = Frame(main, bg="#0b132b")
+frame_top.pack(pady=10)
 
-# ── Algorithm buttons – Row 1 ─────────────────────────────────── y=300
-Button(main, text="Upload Dataset",
-       command=uploadDataset, font=font2).place(x=10, y=300)
+text = Text(frame_top, height=12, width=140,
+            font=('times', 11),
+            bg="#020617", fg="#00ffcc",
+            insertbackground="white")
+text.pack(side=LEFT)
 
-Button(main, text="Preprocess Dataset",
-       command=preprocessing, font=font2).place(x=200, y=300)
+scroll = Scrollbar(frame_top, command=text.yview)
+scroll.pack(side=RIGHT, fill=Y)
+text.config(yscrollcommand=scroll.set)
 
-Button(main, text="Run AutoEncoder",
-       command=lambda: threading.Thread(
-           target=runAutoEncoder, daemon=True).start(),
-       font=font2).place(x=420, y=300)
+# ================= BUTTONS =================
+frame_buttons = Frame(main, bg="#0b132b")
+frame_buttons.pack(pady=10)
 
-Button(main, text="Run Random Forest",
-       command=runRandomForest, font=font2).place(x=620, y=300)
+Button(frame_buttons, text="Upload Dataset", command=uploadDataset,
+       width=18, bg="#3a86ff", fg="white").grid(row=0, column=0, padx=10, pady=5)
 
-Button(main, text="Run MLP",
-       command=runMLP, font=font2).place(x=850, y=300)
+Button(frame_buttons, text="Preprocess Dataset", command=preprocessing,
+       width=18, bg="#3a86ff", fg="white").grid(row=0, column=1, padx=10)
 
-# ── Algorithm buttons – Row 2 ─────────────────────────────────── y=345
-Button(main, text="Detection & Attribute Attack Type",
-       command=attackAttributeDetection, font=font2).place(x=10, y=345)
+Button(frame_buttons, text="Run AutoEncoder",
+       command=lambda: threading.Thread(target=runAutoEncoder, daemon=True).start(),
+       width=18, bg="#8338ec", fg="white").grid(row=0, column=2, padx=10)
 
-Button(main, text="Comparison Graph",
-       command=showGraphSelection, font=font2).place(x=420, y=345)
+Button(frame_buttons, text="Run Random Forest",
+       command=runRandomForest,
+       width=18, bg="#ff006e", fg="white").grid(row=0, column=3, padx=10)
 
-Button(main, text="Comparison Table",
-       command=comparisonTable, font=font2).place(x=700, y=345)
+Button(frame_buttons, text="Run MLP",
+       command=runMLP,
+       width=18, bg="#ff006e", fg="white").grid(row=0, column=4, padx=10)
 
-# ── Real-Time Detection Log header ────────────────────────────── y=395
-Label(main,
-      text="  ⚡ Real-Time Detection Log  —  threats show in RED, safe traffic in GREEN",
-      bg='#001133', fg='#00ccff',
-      font=('times', 11, 'bold'),
-      anchor='w', width=140).place(x=10, y=395)
+Button(frame_buttons, text="Attack Detection",
+       command=attackAttributeDetection,
+       width=18, bg="#fb5607", fg="white").grid(row=1, column=0, pady=10)
 
-# ── Log text box ──────────────────────────────────────────────── y=425
-log_text = Text(main, height=8, width=152,
+Button(frame_buttons, text="Comparison Graph",
+       command=showGraphSelection,
+       width=18, bg="#fb5607", fg="white").grid(row=1, column=1)
+
+Button(frame_buttons, text="Comparison Table",
+       command=comparisonTable,
+       width=18, bg="#fb5607", fg="white").grid(row=1, column=2)
+
+# ================= REAL-TIME LOG =================
+log_label = Label(main,
+                  text="⚡ Real-Time Detection Log",
+                  bg="#1c2541", fg="#00ffcc",
+                  font=('times', 14, 'bold'))
+log_label.pack(fill=X, pady=5)
+
+frame_log = Frame(main)
+frame_log.pack()
+
+log_text = Text(frame_log, height=10, width=140,
                 font=('Courier', 10),
-                bg='#050510', fg='#00ff88',
-                insertbackground='white',
-                relief=SUNKEN, bd=2,
+                bg="#020617", fg="#00ff88",
+                insertbackground="white",
                 state=DISABLED)
-log_scroll = Scrollbar(main, orient=VERTICAL, command=log_text.yview)
-log_text.configure(yscrollcommand=log_scroll.set)
-log_text.place(x=10, y=425)
-log_scroll.place(x=1281, y=425, height=145)
+log_text.pack(side=LEFT)
 
-# ── Three action buttons ──────────────────────────────────────── y=580
-monitor_button = Button(main,
-                        text="▶  Start Monitoring",
+log_scroll = Scrollbar(frame_log, command=log_text.yview)
+log_scroll.pack(side=RIGHT, fill=Y)
+log_text.config(yscrollcommand=log_scroll.set)
+
+# ================= CONTROL BUTTONS =================
+frame_controls = Frame(main, bg="#0b132b")
+frame_controls.pack(pady=15)
+
+monitor_button = Button(frame_controls,
+                        text="▶ Start Monitoring",
                         command=start_monitoring,
-                        font=('times', 12, 'bold'),
-                        bg='#007700', fg='white',
-                        width=20, relief=RAISED, bd=3)
-monitor_button.place(x=10, y=580)
+                        bg="#06d6a0", fg="black",
+                        width=20, font=('times', 12, 'bold'))
+monitor_button.grid(row=0, column=0, padx=20)
 
-Button(main,
-       text="💾  Save Detection Log",
+Button(frame_controls,
+       text="💾 Save Log",
        command=save_detection_log,
-       font=('times', 12, 'bold'),
-       bg='#0055bb', fg='white',
-       width=20, relief=RAISED, bd=3).place(x=280, y=580)
+       bg="#118ab2", fg="white",
+       width=20, font=('times', 12, 'bold')).grid(row=0, column=1, padx=20)
 
-Button(main,
-       text="🗑  Clear Log",
+Button(frame_controls,
+       text="🗑 Clear Log",
        command=clear_detection_log,
-       font=('times', 12, 'bold'),
-       bg='#994400', fg='white',
-       width=14, relief=RAISED, bd=3).place(x=550, y=580)
+       bg="#ef476f", fg="white",
+       width=15, font=('times', 12, 'bold')).grid(row=0, column=2, padx=20)
 
 main.mainloop()

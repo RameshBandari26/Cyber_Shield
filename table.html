@@ -1,106 +1,30 @@
-
-    <html>
-    <head>
-        <title>Cyber Threat Detection - Comparison Table</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                background: linear-gradient(to right, #0066ff, #33ccff);
-                text-align: center;
-                color: white;
-            }
-            h2 {
-                color: #ffcc00;
-                text-shadow: 2px 2px 4px #000000;
-            }
-            table {
-                width: 80%;
-                margin: auto;
-                border-collapse: collapse;
-                background-color: rgba(255, 255, 255, 0.9);
-                color: black;
-                border-radius: 10px;
-                overflow: hidden;
-                box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.5);
-            }
-            th, td {
-                border: 1px solid black;
-                padding: 10px;
-                text-align: center;
-                font-weight: bold;
-            }
-            th {
-                background-color: #ff6600;
-                color: white;
-            }
-            tr:nth-child(even) {
-                background-color: #f2f2f2;
-            }
-            tr:hover {
-                background-color: #ffff99;
-            }
-            h3 {
-                margin-top: 40px;
-                color: #ffcc00;
-                text-shadow: 2px 2px 4px #000000;
-            }
-            .precaution-list {
-                width: 80%;
-                margin: auto;
-                text-align: left;
-                background-color: rgba(255, 255, 255, 0.9);
-                color: black;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.5);
-            }
-            li {
-                margin: 10px 0;
-                font-size: 16px;
-                font-weight: bold;
-                color: #333;
-            }
-        </style>
-    </head>
-    <body>
-        <h2>Cyber Threat Detection - Performance Comparison</h2>
-        <table>
-            <tr>
-                <th>Algorithm Name</th>
-                <th>Accuracy (%)</th>
-                <th>Precision (%)</th>
-                <th>Recall (%)</th>
-                <th>F1 Score (%)</th>
-            </tr>
-            <tr>
-                <td>AutoEncoder</td>
-                <td>87.50</td>
-                <td>98.15</td>
-                <td>25.00</td>
-                <td>24.00</td>
-            </tr>
-            <tr>
-                <td>Random Forest</td>
-                <td>90.28</td>
-                <td>97.68</td>
-                <td>71.60</td>
-                <td>71.94</td>
-            </tr>
-            <tr>
-                <td>MLP</td>
-                <td>90.13</td>
-                <td>98.52</td>
-                <td>61.23</td>
-                <td>61.06</td>
-            </tr>
-        </table>
-
-        <h3>Precautionary Measures for Cyber Threats</h3>
-        <div class="precaution-list">
-            <ul>
-    <li><b>Phishing:</b> Implement email filtering systems, educate users to recognize phishing attempts, and enable multi-factor authentication (MFA) to prevent unauthorized access.</li><li><b>Denial of Service (DoS):</b> Implement rate-limiting, use firewalls and intrusion detection/prevention systems, and deploy load balancers to mitigate excessive traffic.</li><li><b>Distributed Denial of Service (DDoS):</b> Use DDoS protection services, deploy content delivery networks (CDNs), and have a well-prepared response plan for large-scale attacks.</li><li><b>Man-in-the-Middle (MITM):</b> Use strong encryption protocols (e.g., SSL/TLS), enforce secure connections, and implement certificate pinning to ensure authenticity of communication.</li><li><b>SQL Injection:</b> Use parameterized queries, employ web application firewalls, sanitize and validate user inputs, and avoid dynamic SQL queries.</li><li><b>Cross-Site Scripting (XSS):</b> Sanitize user inputs, use content security policies (CSP), and implement secure coding practices such as output encoding.</li><li><b>Zero-Day Exploit:</b> Keep software updated with security patches, use intrusion detection systems (IDS), and monitor for unusual network activity.</li><li><b>Brute Force Attack:</b> Implement account lockout policies, use CAPTCHAs, enforce strong password policies, and utilize multi-factor authentication (MFA).</li>
-            </ul>
-        </div>
-    </body>
-    </html>
-    
+<!DOCTYPE html><html><head><title>CyberShield Results</title>
+<style>
+body{font-family:Arial,sans-serif;background:linear-gradient(to right,#0066ff,#33ccff);
+     text-align:center;color:#fff}
+h2{color:#ffcc00;text-shadow:2px 2px 4px #000}
+table{width:82%;margin:20px auto;border-collapse:collapse;
+       background:rgba(255,255,255,.92);color:#000;
+       border-radius:10px;overflow:hidden;box-shadow:0 0 12px rgba(0,0,0,.4)}
+th{background:#ff6600;color:#fff;padding:10px}
+td{border:1px solid #aaa;padding:9px;text-align:center}
+tr:nth-child(even){background:#f5f5f5}tr:hover{background:#fffacc}
+</style></head><body>
+<h2>Performance Comparison</h2>
+<table>
+<tr><th>Algorithm</th><th>Accuracy (%)</th><th>Precision (%)</th>
+    <th>Recall (%)</th><th>F1 Score (%)</th></tr>
+<tr><td>AutoEncoder</td>
+    <td>86.88</td><td>98.03</td>
+    <td>25.00</td><td>23.93</td></tr>
+<tr><td>Random Forest</td>
+    <td>89.74</td><td>98.01</td>
+    <td>73.30</td><td>73.08</td></tr>
+<tr><td>MLP</td>
+    <td>90.26</td><td>98.51</td>
+    <td>71.03</td><td>71.92</td></tr>
+</table>
+<h2>Precautionary Measures</h2>
+<table><tr><th>Attack Type</th><th>Recommended Action</th></tr>
+<tr><td><b>Phishing</b></td><td>Implement email filtering, educate users, enable MFA.</td></tr><tr><td><b>Denial of Service (DoS)</b></td><td>Rate-limiting, firewalls, IDS/IPS, load balancers.</td></tr><tr><td><b>Distributed Denial of Service (DDoS)</b></td><td>DDoS protection services, CDNs, response plans.</td></tr><tr><td><b>Man-in-the-Middle (MITM)</b></td><td>SSL/TLS, certificate pinning, secure connections.</td></tr><tr><td><b>SQL Injection</b></td><td>Parameterized queries, WAF, sanitize inputs.</td></tr><tr><td><b>Cross-Site Scripting (XSS)</b></td><td>Sanitize inputs, Content Security Policy, output encoding.</td></tr><tr><td><b>Zero-Day Exploit</b></td><td>Keep software patched, use IDS, monitor network activity.</td></tr><tr><td><b>Brute Force Attack</b></td><td>Account lockout, CAPTCHA, strong passwords, MFA.</td></tr></table>
+</body></html>

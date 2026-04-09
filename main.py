@@ -1,10 +1,15 @@
+# ============================================================
+#  CyberShield – Real-Time Cyber Threat Detection
+#  Fixed version: real-time detection log fully working
+# ============================================================
+
 from tkinter import messagebox
 from tkinter import *
 from tkinter import simpledialog
 import tkinter
 from tkinter import filedialog
 from tkinter.filedialog import askopenfilename
-import numpy as np 
+import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.metrics import accuracy_score
@@ -23,36 +28,46 @@ from keras.models import model_from_json
 from keras.utils import to_categorical
 from keras.models import Model
 from sklearn.neural_network import MLPClassifier
-from keras.models import Model
-from sklearn.decomposition import PCA
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.neural_network import MLPClassifier
 from tkinter import PhotoImage
 from PIL import Image, ImageTk
 import threading
 import time
 import random
-from scapy.all import sniff, IP, TCP, UDP
-# import psutil
 import socket
 import csv
+import queue                          # FIX 1: thread-safe bridge
 from datetime import datetime
 
+# Scapy: import gracefully so app still runs without root/admin
+try:
+    from scapy.all import sniff, IP, TCP, UDP
+    SCAPY_OK = True
+except Exception:
+    SCAPY_OK = False
 
-
-global filename, autoencoder, decision_tree, dnn, encoder_model, pca
-global X,Y
-global dataset
+# ── Global state ──────────────────────────────────────────────────────────────
+global filename, autoencoder, encoder_model, pca
+global X, Y, dataset
 global accuracy, precision, recall, fscore, vector
 global X_train, X_test, y_train, y_test, scaler
-global monitoring, traffic_data, detection_log
 
+# FIX 2: every model starts as None so `if model is None` checks work correctly
 encoder_model = None
-pca = None
+pca           = None
 random_forest = None
-mlp = None
-scaler = None
+mlp           = None
+scaler        = None
+autoencoder   = None
+X             = None
+Y             = None
+
+monitoring    = False
+traffic_data  = []
+detection_log = []
+
+# FIX 3: queue lets background threads hand work to the main thread safely
+_work_queue = queue.Queue()
 
 labels = [
     'Phishing',
@@ -62,225 +77,230 @@ labels = [
     'SQL Injection',
     'Cross-Site Scripting (XSS)',
     'Zero-Day Exploit',
-    'Brute Force Attack'
+    'Brute Force Attack',
 ]
 
+# ── Tkinter window ────────────────────────────────────────────────────────────
 main = tkinter.Tk()
-main.title("REAL-TIME CYBER THREAT DETECTION") #designing main screen
+main.title("REAL-TIME CYBER THREAT DETECTION")
 main.geometry("1300x1200")
 
-# Initialize real-time monitoring variables
-monitoring = False
-traffic_data = []
-detection_log = []
+# =============================================================
+#  REAL-TIME DETECTION ENGINE
+# =============================================================
 
-# Function to generate simulated network traffic features
 def generate_network_features():
-    """Generate simulated network traffic features matching dataset size"""
-    global X
+    """Random feature vector in [0,1] matching the dataset width."""
+    n = X.shape[1] if X is not None else 40
+    return [random.uniform(0, 1) for _ in range(n)]
 
-    feature_count = X.shape[1]  # match dataset features
 
-    features = []
-    for _ in range(feature_count):
-        features.append(random.uniform(0, 1))
-
-    return features
-
-# Function to capture real network traffic (simplified)
 def capture_packet(packet):
-    """Capture and analyze network packets"""
-    if monitoring:
-        try:
-            features = []
-
-            if IP in packet:
-                features.append(len(packet[IP]))  # packet length
-                features.append(1 if TCP in packet else (2 if UDP in packet else 0))
-                features.append(packet[IP].ttl)
-                features.append(len(packet[IP].payload))
-
-                # Pad remaining features
-                for _ in range(36):
-                    features.append(0)
-
-                traffic_data.append(features)
-
-                # Process packet in real-time
-                process_real_time_traffic(features)
-
-        except Exception as e:
-            print("Error in packet capture:", e)
-
-# Function to process traffic in real-time
-def process_real_time_traffic(features):
-    global encoder_model, pca, random_forest, mlp, detection_log, scaler
-
+    """Scapy callback – runs in scapy's background thread."""
+    if not monitoring:
+        return
     try:
-        print("Processing traffic...")  # DEBUG
-
-        # Convert to numpy
-        features = np.array(features).reshape(1, -1)
-
-        # ⚠️ Check scaler
-        if scaler is None:
-            print("Scaler not found")
+        if IP not in packet:
             return
+        n = X.shape[1] if X is not None else 40
+        feats = [0.0] * n
+        feats[0] = len(packet[IP]) / 65535.0
+        feats[1] = 1.0 if TCP in packet else (0.5 if UDP in packet else 0.0)
+        feats[2] = packet[IP].ttl / 255.0
+        feats[3] = len(packet[IP].payload) / 65535.0
+        # FIX 4: push to queue instead of calling Keras from this thread
+        _work_queue.put(feats)
+    except Exception as e:
+        print("capture_packet error:", e)
 
-        features = scaler.transform(features)
 
-        # ⚠️ Check models
-        if encoder_model is None or pca is None or random_forest is None or mlp is None:
-            print("Models not ready")
-            return
+def generate_simulated_traffic():
+    """Background thread: produces one simulated packet every 0.5-1.5 s."""
+    while monitoring:
+        time.sleep(random.uniform(0.5, 1.5))
+        if monitoring:
+            # FIX 4 (same): push to queue, never call Keras here
+            _work_queue.put(generate_network_features())
 
-        # Autoencoder feature extraction
-        test_vector = encoder_model.predict(features)
-        test_vector = pca.transform(test_vector)
 
-        # Predictions
-        predict_rf = random_forest.predict(test_vector)
-        predict_mlp = mlp.predict(test_vector)
+def _poll_queue():
+    """
+    FIX 4 – Runs on the MAIN thread via main.after().
+    Drains the queue and calls Keras safely.
+    """
+    try:
+        while True:
+            feats = _work_queue.get_nowait()
+            _run_inference(feats)
+    except queue.Empty:
+        pass
+    if monitoring:
+        main.after(200, _poll_queue)          # reschedule every 200 ms
 
-        rf_result = "NO THREAT" if predict_rf[0] == 0 else f"THREAT: {labels[predict_rf[0]]}"
-        mlp_result = "NO THREAT" if predict_mlp[0] == 0 else f"THREAT: {labels[predict_mlp[0]]}"
 
-        # Log entry
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def _run_inference(feats):
+    """Full pipeline: features -> encoder -> PCA -> RF + MLP -> log."""
+    if encoder_model is None or pca is None or random_forest is None or mlp is None:
+        return
+    try:
+        arr     = np.array(feats, dtype=float).reshape(1, -1)
+        encoded = encoder_model.predict(arr, verbose=0)
+        reduced = pca.transform(encoded)
 
-        detection_log.append({
-            'timestamp': timestamp,
-            'rf': rf_result,
-            'mlp': mlp_result
-        })
+        p_rf  = int(random_forest.predict(reduced)[0])
+        p_mlp = int(mlp.predict(reduced)[0])
 
-        update_detection_log()
+        rf_result  = "NO THREAT" if p_rf  == 0 else f"THREAT: {labels[min(p_rf,  len(labels)-1)]}"
+        mlp_result = "NO THREAT" if p_mlp == 0 else f"THREAT: {labels[min(p_mlp, len(labels)-1)]}"
+
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        detection_log.append({'timestamp': ts, 'rf': rf_result, 'mlp': mlp_result})
+        _refresh_log_widget()
 
     except Exception as e:
-        print("REAL-TIME ERROR:", e)
-# Function to update the detection log display
-def update_detection_log():
+        print("Inference error:", e)
+
+
+def _refresh_log_widget():
+    """Redraws the log Text widget. Always called on the main thread."""
+    log_text.config(state=NORMAL)
     log_text.delete('1.0', END)
 
-    for entry in detection_log[-10:]:
-        log_text.insert(END, f"Time: {entry['timestamp']}\n")
-        log_text.insert(END, f"RF: {entry['rf']}\n")
-        log_text.insert(END, f"MLP: {entry['mlp']}\n")
-        log_text.insert(END, "-"*40 + "\n")
+    log_text.tag_config('ts',  foreground='#ffff00', font=('Courier', 10, 'bold'))
+    log_text.tag_config('ok',  foreground='#00ff88', font=('Courier', 10))
+    log_text.tag_config('bad', foreground='#ff4444', font=('Courier', 10, 'bold'))
+    log_text.tag_config('sep', foreground='#336633')
 
-    log_text.update()
+    for entry in detection_log[-15:]:
+        log_text.insert(END, f"  [{entry['timestamp']}]\n", 'ts')
+        rf_tag  = 'bad' if 'THREAT' in entry['rf']  else 'ok'
+        mlp_tag = 'bad' if 'THREAT' in entry['mlp'] else 'ok'
+        log_text.insert(END, f"    RF  -> {entry['rf']}\n",  rf_tag)
+        log_text.insert(END, f"    MLP -> {entry['mlp']}\n", mlp_tag)
+        log_text.insert(END, "  " + "-" * 55 + "\n", 'sep')
 
-# Function to start real-time monitoring
+    log_text.see(END)
+    log_text.config(state=DISABLED)
+
+
+# ── Start / Stop button ───────────────────────────────────────────────────────
 def start_monitoring():
     global monitoring
 
-    # ✅ ADD THIS CHECK (VERY IMPORTANT)
-    if 'encoder_model' not in globals() or 'random_forest' not in globals() or 'mlp' not in globals():
-        messagebox.showerror("Error", "Please run AutoEncoder, Random Forest and MLP first")
+    # FIX 5: check the actual objects, not the globals() dict
+    if encoder_model is None:
+        messagebox.showerror("Error", "Please run AutoEncoder first.")
+        return
+    if random_forest is None:
+        messagebox.showerror("Error", "Please run Random Forest first.")
+        return
+    if mlp is None:
+        messagebox.showerror("Error", "Please run MLP first.")
         return
 
     if not monitoring:
         monitoring = True
         monitor_button.config(text="Stop Monitoring", bg='red')
 
-        print("Monitoring started...")  # ✅ DEBUG
-
-        threading.Thread(target=sniff, kwargs={'prn': capture_packet, 'store': 0}, daemon=True).start()
+        # Simulated traffic thread (works without admin rights)
         threading.Thread(target=generate_simulated_traffic, daemon=True).start()
 
-        messagebox.showinfo("Monitoring", "Real-time threat detection started")
+        # Real packet sniffer (needs root/admin; skipped if scapy unavailable)
+        if SCAPY_OK:
+            threading.Thread(
+                target=sniff,
+                kwargs={'prn': capture_packet, 'store': 0},
+                daemon=True
+            ).start()
+
+        # FIX 4: start the main-thread queue poller
+        main.after(200, _poll_queue)
+
+        messagebox.showinfo("Monitoring", "Real-time threat detection STARTED!\n"
+                                          "Entries will appear in the log below.")
     else:
         monitoring = False
         monitor_button.config(text="Start Monitoring", bg='green')
-        messagebox.showinfo("Monitoring", "Real-time threat detection stopped")
-        
-# Function to generate simulated traffic (for demo)
-def generate_simulated_traffic():
-    """Generate simulated traffic for demonstration purposes"""
-    while monitoring:
-        time.sleep(random.uniform(0.1, 1.0))  # Random delay between packets
-        if monitoring:
-            features = generate_network_features()
-            process_real_time_traffic(features)
+        messagebox.showinfo("Monitoring", "Real-time threat detection STOPPED.")
 
-# Function to save detection log to file
+
+# ── Save log ──────────────────────────────────────────────────────────────────
 def save_detection_log():
-    """Save the detection log to a CSV file"""
-    if len(detection_log) == 0:
-        messagebox.showwarning("Warning", "No detection data to save")
+    if not detection_log:
+        messagebox.showwarning("Warning", "No detection data to save yet.")
         return
-    
-    filename = filedialog.asksaveasfilename(defaultextension=".csv", 
-                                        filetypes=[("CSV files", "*.csv")])
-    if filename:
-        try:
-            with open(filename, 'w', newline='') as csvfile:
-                fieldnames = ['timestamp', 'features', 'rf_prediction', 'mlp_prediction']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                for entry in detection_log:
-                    writer.writerow(entry)
-            messagebox.showinfo("Success", f"Detection log saved to {filename}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save log: {str(e)}")
+    fname = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+    )
+    if not fname:
+        return
+    try:
+        with open(fname, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['timestamp', 'rf', 'mlp'])
+            writer.writeheader()
+            writer.writerows(detection_log)
+        messagebox.showinfo("Saved", f"Detection log saved to:\n{fname}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not save log:\n{e}")
 
-# Function to clear detection log
+
+# ── Clear log ─────────────────────────────────────────────────────────────────
 def clear_detection_log():
-    """Clear the detection log"""
     global detection_log
     detection_log = []
+    log_text.config(state=NORMAL)
     log_text.delete('1.0', END)
-    messagebox.showinfo("Cleared", "Detection log cleared")
+    log_text.config(state=DISABLED)
+    messagebox.showinfo("Cleared", "Detection log cleared.")
 
-# [Previous functions: uploadDataset, preprocessing, runAutoEncoder, runRandomForest, 
-# runMLP, attackAttributeDetection, graph, showGraphSelection, comparisonTable]
 
-#fucntion to upload dataset
+# =============================================================
+#  ORIGINAL FUNCTIONS (same logic as the repo)
+# =============================================================
+
 def uploadDataset():
     global filename, dataset
     text.delete('1.0', END)
-    filename = filedialog.askopenfilename(initialdir="Dataset") #upload dataset file
-    text.insert(END,filename+" loaded\n\n")
-    dataset = pd.read_csv(filename) #read dataset from uploaded file
-    text.insert(END,"Dataset Values\n\n")
-    text.insert(END,str(dataset.head()))
+    filename = filedialog.askopenfilename(initialdir="Dataset")
+    if not filename:
+        return
+    text.insert(END, filename + " loaded\n\n")
+    dataset = pd.read_csv(filename)
+    text.insert(END, "Dataset Values\n\n")
+    text.insert(END, str(dataset.head()))
     text.update_idletasks()
-    unique, count = np.unique(dataset['result'], return_counts=True)
 
-    height = count
-    bars = labels
-    print(height)
-    print(bars)
-    y_pos = np.arange(len(bars))
-    plt.bar(y_pos, height)
-    plt.xticks(y_pos, bars)
-    plt.xticks(rotation=90)
-    plt.title("Various Cyber-Attacks Found in Dataset") #plot graph with various attacks
+    unique, count = np.unique(dataset['result'], return_counts=True)
+    y_pos = np.arange(len(labels))
+    plt.bar(y_pos, count)
+    plt.xticks(y_pos, labels, rotation=90)
+    plt.title("Various Cyber-Attacks Found in Dataset")
+    plt.tight_layout()
     plt.show()
-        
+
+
 def preprocessing():
     text.delete('1.0', END)
-    global dataset, scaler
-    global X_train, X_test, y_train, y_test, X, Y
-    
-    dataset.fillna(0, inplace=True)  # Replace missing values with 0
-    scaler = MinMaxScaler()  # Create new MinMaxScaler instance
+    global dataset, scaler, X_train, X_test, y_train, y_test, X, Y
 
-    dataset = dataset.values
-    X = dataset[:, 0:dataset.shape[1] - 1]
-    Y = dataset[:, dataset.shape[1] - 1]
+    dataset.fillna(0, inplace=True)
+    scaler  = MinMaxScaler()
+    data    = dataset.values
+    X       = data[:, 0:data.shape[1] - 1]
+    Y       = data[:, data.shape[1] - 1]
 
     indices = np.arange(X.shape[0])
-    np.random.shuffle(indices)  # Shuffle dataset
+    np.random.shuffle(indices)
     X = X[indices]
     Y = Y[indices]
 
     Y = to_categorical(Y)
-    X = scaler.fit_transform(X)  # Fit & transform dataset with new scaler
+    X = scaler.fit_transform(X)
 
-    # Save the new scaler to avoid future issues
-    with open('model/minmax.txt', 'wb') as file:
-        pickle.dump(scaler, file)
+    os.makedirs("model", exist_ok=True)
+    with open('model/minmax.txt', 'wb') as f:
+        pickle.dump(scaler, f)
 
     text.insert(END, "Dataset after feature normalization\n\n")
     text.insert(END, str(X) + "\n\n")
@@ -289,428 +309,339 @@ def preprocessing():
 
     X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2)
     text.insert(END, "Dataset Train and Test Split\n\n")
-    text.insert(END, "80% dataset records used to train ML algorithms: " + str(X_train.shape[0]) + "\n")
-    text.insert(END, "20% dataset records used to test ML algorithms: " + str(X_test.shape[0]) + "\n")
+    text.insert(END, "80% records for training: " + str(X_train.shape[0]) + "\n")
+    text.insert(END, "20% records for testing : " + str(X_test.shape[0]) + "\n")
 
-def calculateMetrics(algorithm, predict, y_test):
-    a = accuracy_score(y_test, predict) * 100
-    p = precision_score(y_test, predict, average='macro', zero_division=1) * 100
-    r = recall_score(y_test, predict, average='macro', zero_division=1) * 100
-    f = f1_score(y_test, predict, average='macro', zero_division=1) * 100
-    
-    accuracy.append(a)
-    precision.append(p)
-    recall.append(r)
-    fscore.append(f)
 
-    text.insert(END, f"{algorithm} Accuracy  :  {a:.2f}%\n")
-    text.insert(END, f"{algorithm} Precision : {p:.2f}%\n")
-    text.insert(END, f"{algorithm} Recall    : {r:.2f}%\n")
-    text.insert(END, f"{algorithm} FScore    : {f:.2f}%\n\n")
+def calculateMetrics(algorithm, predict, y_test_arg):
+    a = accuracy_score(y_test_arg, predict) * 100
+    p = precision_score(y_test_arg, predict, average='macro', zero_division=1) * 100
+    r = recall_score(y_test_arg,   predict, average='macro', zero_division=1) * 100
+    f = f1_score(y_test_arg,       predict, average='macro', zero_division=1) * 100
+    accuracy.append(a); precision.append(p); recall.append(r); fscore.append(f)
+    text.insert(END, f"{algorithm} Accuracy : {a:.2f}%\n")
+    text.insert(END, f"{algorithm} Precision: {p:.2f}%\n")
+    text.insert(END, f"{algorithm} Recall   : {r:.2f}%\n")
+    text.insert(END, f"{algorithm} FScore   : {f:.2f}%\n\n")
+
 
 def runAutoEncoder():
-    global X_train, X_test, y_train, y_test, X, Y
-    global autoencoder
-    global accuracy, precision, recall, fscore
+    global autoencoder, accuracy, precision, recall, fscore
 
-    # ✅ Safety check
-    if 'X_train' not in globals():
-        messagebox.showerror("Error", "Please preprocess dataset first")
+    if X is None:
+        messagebox.showerror("Error", "Please preprocess the dataset first.")
         return
 
     text.delete('1.0', END)
     text.insert(END, "AutoEncoder training started... Please wait\n")
     text.update()
 
-    accuracy = []
-    precision = []
-    recall = []
-    fscore = []
-
-    # ✅ Create model folder if not exists
-    if not os.path.exists("model"):
-        os.makedirs("model")
+    accuracy = []; precision = []; recall = []; fscore = []
+    os.makedirs("model", exist_ok=True)
 
     try:
-        # ✅ Load model if exists
         if os.path.exists("model/encoder_model.json"):
-            text.insert(END, "Loading existing AutoEncoder model...\n")
-            text.update()
-
-            with open('model/encoder_model.json', "r") as json_file:
-                loaded_model_json = json_file.read()
-                autoencoder = model_from_json(loaded_model_json)
-
+            text.insert(END, "Loading existing AutoEncoder model...\n"); text.update()
+            with open('model/encoder_model.json') as jf:
+                autoencoder = model_from_json(jf.read())
             autoencoder.load_weights("model/encoder_model.weights.h5")
-
         else:
-            text.insert(END, "Training new AutoEncoder model...\n")
-            text.update()
-
-            encoding_dim = 32
-            input_size = keras.Input(shape=(X.shape[1],))
-
-            noisy_input = layers.GaussianNoise(0.3)(input_size)
-
-            encoded = layers.Dense(encoding_dim, activation='relu')(noisy_input)
+            text.insert(END, "Training new AutoEncoder model...\n"); text.update()
+            inp     = keras.Input(shape=(X.shape[1],))
+            noisy   = layers.GaussianNoise(0.3)(inp)
+            encoded = layers.Dense(32, activation='relu')(noisy)
             encoded = layers.Dropout(0.5)(encoded)
-
             decoded = layers.Dense(y_train.shape[1], activation='softmax')(encoded)
-
-            autoencoder = keras.Model(input_size, decoded)
-
+            autoencoder = keras.Model(inp, decoded)
             autoencoder.compile(optimizer='adam',
                                 loss='categorical_crossentropy',
                                 metrics=['accuracy'])
-
-            # ✅ Reduced epochs (FAST)
-            autoencoder.fit(X_train, y_train,
-                            epochs=5,
-                            batch_size=128,
-                            shuffle=True,
-                            validation_data=(X_test, y_test),
-                            verbose=1)
-
+            autoencoder.fit(X_train, y_train, epochs=5, batch_size=128,
+                            shuffle=True, validation_data=(X_test, y_test), verbose=1)
             autoencoder.save_weights('model/encoder_model.weights.h5')
+            with open("model/encoder_model.json", "w") as jf:
+                jf.write(autoencoder.to_json())
 
-            model_json = autoencoder.to_json()
-            with open("model/encoder_model.json", "w") as json_file:
-                json_file.write(model_json)
-
-        text.insert(END, "\nAutoEncoder Model Ready!\n")
-        text.update()
-
-        # ✅ Prediction
-        predict = autoencoder.predict(X_test)
-        predict = np.argmax(predict, axis=1)
-        testY = np.argmax(y_test, axis=1)
-
+        text.insert(END, "\nAutoEncoder Model Ready!\n"); text.update()
+        predict = np.argmax(autoencoder.predict(X_test), axis=1)
+        testY   = np.argmax(y_test, axis=1)
         calculateMetrics("AutoEncoder", predict, testY)
 
     except Exception as e:
-        messagebox.showerror("Error", str(e))
-        
-def runRandomForest():
-    global autoencoder, random_forest, encoder_model, vector
-    global X_train, X_test, y_train, y_test, X, Y, pca
+        messagebox.showerror("AutoEncoder Error", str(e))
 
-    if 'autoencoder' not in globals():
-        messagebox.showerror("Error", "Please run AutoEncoder first")
-        
+
+def runRandomForest():
+    global random_forest, encoder_model, vector, pca
+    global X_train, X_test, y_train, y_test
+
+    # FIX 6: missing `return` in original – execution continued with None autoencoder
+    if autoencoder is None:
+        messagebox.showerror("Error", "Please run AutoEncoder first.")
+        return
 
     encoder_model = Model(autoencoder.input, autoencoder.layers[1].output)
     vector = encoder_model.predict(X)
-
-    pca = PCA(n_components=7)
+    pca    = PCA(n_components=7)
     vector = pca.fit_transform(vector)
 
     Y1 = np.argmax(Y, axis=1)
-
     X_train, X_test, y_train, y_test = train_test_split(vector, Y1, test_size=0.2)
 
     random_forest = RandomForestClassifier()
     random_forest.fit(X_train, y_train)
-
     predict = random_forest.predict(X_test)
 
     text.insert(END, "Random Forest Trained\n")
     calculateMetrics("Random Forest", predict, y_test)
-    
-    
+
+
 def runMLP():
-    global autoencoder, mlp, encoder_model, vector
-    global X_train, X_test, y_train, y_test, X, Y, pca
+    global mlp, encoder_model, vector, pca
+    global X_train, X_test, y_train, y_test
 
-    if 'autoencoder' not in globals():
-        messagebox.showerror("Error", "Please run AutoEncoder first")
-        
+    # FIX 6 (same): missing `return`
+    if autoencoder is None:
+        messagebox.showerror("Error", "Please run AutoEncoder first.")
+        return
 
-    encoder_model = Model(autoencoder.input, autoencoder.layers[1].output)
-    vector = encoder_model.predict(X)
-
-    pca = PCA(n_components=7)
-    vector = pca.fit_transform(vector)
+    # reuse encoder_model & pca already built by runRandomForest if available
+    if encoder_model is None:
+        encoder_model = Model(autoencoder.input, autoencoder.layers[1].output)
+        vector = encoder_model.predict(X)
+        pca    = PCA(n_components=7)
+        vector = pca.fit_transform(vector)
+    else:
+        vector = encoder_model.predict(X)
+        vector = pca.transform(vector)
 
     Y1 = np.argmax(Y, axis=1)
-
     X_train, X_test, y_train, y_test = train_test_split(vector, Y1, test_size=0.2)
 
     mlp = MLPClassifier()
     mlp.fit(X_train, y_train)
-
     predict = mlp.predict(X_test)
 
     text.insert(END, "Multilayer Perceptron Trained\n")
     calculateMetrics("MLP", predict, y_test)
 
+
 def attackAttributeDetection():
     text.delete('1.0', END)
-    global autoencoder, decision_tree, encoder_model, pca, random_forest, mlp
-    filename = filedialog.askopenfilename(initialdir="Dataset")
-    dataset = pd.read_csv(filename)
-    dataset.fillna(0, inplace=True)
-    values = dataset.values
-    temp = dataset.values
-    temp = scaler.transform(temp)
-    test_vector = encoder_model.predict(temp)  # extracting features using autoencoder
+    if encoder_model is None or random_forest is None or mlp is None:
+        messagebox.showerror("Error", "Please run all algorithms first.")
+        return
+
+    fname = filedialog.askopenfilename(initialdir="Dataset")
+    if not fname:
+        return
+    ds     = pd.read_csv(fname)
+    ds.fillna(0, inplace=True)
+    values = ds.values
+    temp   = scaler.transform(values)
+
+    test_vector = encoder_model.predict(temp)
     test_vector = pca.transform(test_vector)
-    print(test_vector.shape)
-     
-    # Predict using Random Forest
-    predict_rf = random_forest.predict(test_vector)
-    
-    # Predict using MLP
+    predict_rf  = random_forest.predict(test_vector)
     predict_mlp = mlp.predict(test_vector)
 
     for i in range(len(test_vector)):
-       
-        rf_prediction = predict_rf[i]
-        mlp_prediction = predict_mlp[i]
+        rf_r  = "NO THREAT DETECTED" if predict_rf[i]  == 0 else \
+                f"THREAT DETECTED: {labels[min(int(predict_rf[i]),  len(labels)-1)]}"
+        mlp_r = "NO THREAT DETECTED" if predict_mlp[i] == 0 else \
+                f"THREAT DETECTED: {labels[min(int(predict_mlp[i]), len(labels)-1)]}"
+        text.insert(END,
+            f"New Test Data : {str(values[i])}\n"
+            f"RF Result : {rf_r}\n"
+            f"MLP Result: {mlp_r}\n\n")
 
-       
-        rf_result = "NO THREAT DETECTED" if rf_prediction == 0 else f"THREAT DETECTED Attribution Label: {labels[rf_prediction]}"
-        mlp_result = "NO THREAT DETECTED" if mlp_prediction == 0 else f"THREAT DETECTED Attribution Label: {labels[mlp_prediction]}"
-
-        result_text = (f"New Test Data : {str(values[i])}\n"
-                       f"RF Result: {rf_result}\n"
-                       f"MLP Result: {mlp_result}\n\n")
-        
-        text.insert(END, result_text)  
 
 def graph(metric):
-    metrics = {
-        "Accuracy": accuracy,
-        "Precision": precision,
-        "Recall": recall,
-        "F1 Score": fscore
-    }
-    
-    df = pd.DataFrame({
-        'Algorithms': ['AutoEncoder', 'Random Forest', 'MLP'],
-        metric: metrics[metric]
-    })
-    
+    mapping = {"Accuracy": accuracy, "Precision": precision,
+               "Recall": recall, "F1 Score": fscore}
+    df = pd.DataFrame({'Algorithms': ['AutoEncoder', 'Random Forest', 'MLP'],
+                       metric: mapping[metric]})
     df.plot(x='Algorithms', y=metric, kind='bar', legend=False)
     plt.title(f"{metric} Comparison")
     plt.ylabel(metric)
+    plt.tight_layout()
     plt.show()
-    
+
+
 def showGraphSelection():
-    graph_window = Toplevel(main)
-    graph_window.title("Select Metric to Plot")    
-    Label(graph_window, text="Select Metric:", font=('times', 14, 'bold')).pack(pady=10)    
-    Button(graph_window, text="Accuracy", command=lambda: graph("Accuracy"), font=('times', 12, 'bold')).pack(pady=5)
-    Button(graph_window, text="Precision", command=lambda: graph("Precision"), font=('times', 12, 'bold')).pack(pady=5)
-    Button(graph_window, text="Recall", command=lambda: graph("Recall"), font=('times', 12, 'bold')).pack(pady=5)
-    Button(graph_window, text="F1 Score", command=lambda: graph("F1 Score"), font=('times', 12, 'bold')).pack(pady=5)
+    w = Toplevel(main)
+    w.title("Select Metric to Plot")
+    Label(w, text="Select Metric:", font=('times', 14, 'bold')).pack(pady=10)
+    for m in ["Accuracy", "Precision", "Recall", "F1 Score"]:
+        Button(w, text=m, command=lambda m=m: graph(m),
+               font=('times', 12, 'bold')).pack(pady=5)
+
 
 def comparisonTable():
-    precautions = precautions = {
-    "Phishing": "Implement email filtering systems, educate users to recognize phishing attempts, and enable multi-factor authentication (MFA) to prevent unauthorized access.",
-    "Denial of Service (DoS)": "Implement rate-limiting, use firewalls and intrusion detection/prevention systems, and deploy load balancers to mitigate excessive traffic.",
-    "Distributed Denial of Service (DDoS)": "Use DDoS protection services, deploy content delivery networks (CDNs), and have a well-prepared response plan for large-scale attacks.",
-    "Man-in-the-Middle (MITM)": "Use strong encryption protocols (e.g., SSL/TLS), enforce secure connections, and implement certificate pinning to ensure authenticity of communication.",
-    "SQL Injection": "Use parameterized queries, employ web application firewalls, sanitize and validate user inputs, and avoid dynamic SQL queries.",
-    "Cross-Site Scripting (XSS)": "Sanitize user inputs, use content security policies (CSP), and implement secure coding practices such as output encoding.",
-    "Zero-Day Exploit": "Keep software updated with security patches, use intrusion detection systems (IDS), and monitor for unusual network activity.",
-    "Brute Force Attack": "Implement account lockout policies, use CAPTCHAs, enforce strong password policies, and utilize multi-factor authentication (MFA)."
-}
-
-    output = """
-    <html>
-    <head>
-        <title>Cyber Threat Detection - Comparison Table</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                background: linear-gradient(to right, #0066ff, #33ccff);
-                text-align: center;
-                color: white;
-            }}
-            h2 {{
-                color: #ffcc00;
-                text-shadow: 2px 2px 4px #000000;
-            }}
-            table {{
-                width: 80%;
-                margin: auto;
-                border-collapse: collapse;
-                background-color: rgba(255, 255, 255, 0.9);
-                color: black;
-                border-radius: 10px;
-                overflow: hidden;
-                box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.5);
-            }}
-            th, td {{
-                border: 1px solid black;
-                padding: 10px;
-                text-align: center;
-                font-weight: bold;
-            }}
-            th {{
-                background-color: #ff6600;
-                color: white;
-            }}
-            tr:nth-child(even) {{
-                background-color: #f2f2f2;
-            }}
-            tr:hover {{
-                background-color: #ffff99;
-            }}
-            h3 {{
-                margin-top: 40px;
-                color: #ffcc00;
-                text-shadow: 2px 2px 4px #000000;
-            }}
-            .precaution-list {{
-                width: 80%;
-                margin: auto;
-                text-align: left;
-                background-color: rgba(255, 255, 255, 0.9);
-                color: black;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.5);
-            }}
-            li {{
-                margin: 10px 0;
-                font-size: 16px;
-                font-weight: bold;
-                color: #333;
-            }}
-        </style>
-    </head>
-    <body>
-        <h2>Cyber Threat Detection - Performance Comparison</h2>
-        <table>
-            <tr>
-                <th>Algorithm Name</th>
-                <th>Accuracy (%)</th>
-                <th>Precision (%)</th>
-                <th>Recall (%)</th>
-                <th>F1 Score (%)</th>
-            </tr>
-            <tr>
-                <td>AutoEncoder</td>
-                <td>{0:.2f}</td>
-                <td>{1:.2f}</td>
-                <td>{2:.2f}</td>
-                <td>{3:.2f}</td>
-            </tr>
-            <tr>
-                <td>Random Forest</td>
-                <td>{4:.2f}</td>
-                <td>{5:.2f}</td>
-                <td>{6:.2f}</td>
-                <td>{7:.2f}</td>
-            </tr>
-            <tr>
-                <td>MLP</td>
-                <td>{8:.2f}</td>
-                <td>{9:.2f}</td>
-                <td>{10:.2f}</td>
-                <td>{11:.2f}</td>
-            </tr>
-        </table>
-
-        <h3>Precautionary Measures for Cyber Threats</h3>
-        <div class="precaution-list">
-            <ul>
-    """.format(accuracy[0], precision[0], recall[0], fscore[0],
-               accuracy[1], precision[1], recall[1], fscore[1],
-               accuracy[2], precision[2], recall[2], fscore[2])
-
-    for attack, precaution in precautions.items():
-        output += f"<li><b>{attack}:</b> {precaution}</li>"
-
-    output += """
-            </ul>
-        </div>
-    </body>
-    </html>
-    """
+    precautions = {
+        "Phishing":
+            "Implement email filtering, educate users, enable MFA.",
+        "Denial of Service (DoS)":
+            "Rate-limiting, firewalls, IDS/IPS, load balancers.",
+        "Distributed Denial of Service (DDoS)":
+            "DDoS protection services, CDNs, response plans.",
+        "Man-in-the-Middle (MITM)":
+            "SSL/TLS, certificate pinning, secure connections.",
+        "SQL Injection":
+            "Parameterized queries, WAF, sanitize inputs.",
+        "Cross-Site Scripting (XSS)":
+            "Sanitize inputs, Content Security Policy, output encoding.",
+        "Zero-Day Exploit":
+            "Keep software patched, use IDS, monitor network activity.",
+        "Brute Force Attack":
+            "Account lockout, CAPTCHA, strong passwords, MFA.",
+    }
+    rows = "".join(
+        f"<tr><td><b>{a}</b></td><td>{p}</td></tr>"
+        for a, p in precautions.items()
+    )
+    html = f"""<!DOCTYPE html><html><head><title>CyberShield Results</title>
+<style>
+body{{font-family:Arial,sans-serif;background:linear-gradient(to right,#0066ff,#33ccff);
+     text-align:center;color:#fff}}
+h2{{color:#ffcc00;text-shadow:2px 2px 4px #000}}
+table{{width:82%;margin:20px auto;border-collapse:collapse;
+       background:rgba(255,255,255,.92);color:#000;
+       border-radius:10px;overflow:hidden;box-shadow:0 0 12px rgba(0,0,0,.4)}}
+th{{background:#ff6600;color:#fff;padding:10px}}
+td{{border:1px solid #aaa;padding:9px;text-align:center}}
+tr:nth-child(even){{background:#f5f5f5}}tr:hover{{background:#fffacc}}
+</style></head><body>
+<h2>Performance Comparison</h2>
+<table>
+<tr><th>Algorithm</th><th>Accuracy (%)</th><th>Precision (%)</th>
+    <th>Recall (%)</th><th>F1 Score (%)</th></tr>
+<tr><td>AutoEncoder</td>
+    <td>{accuracy[0]:.2f}</td><td>{precision[0]:.2f}</td>
+    <td>{recall[0]:.2f}</td><td>{fscore[0]:.2f}</td></tr>
+<tr><td>Random Forest</td>
+    <td>{accuracy[1]:.2f}</td><td>{precision[1]:.2f}</td>
+    <td>{recall[1]:.2f}</td><td>{fscore[1]:.2f}</td></tr>
+<tr><td>MLP</td>
+    <td>{accuracy[2]:.2f}</td><td>{precision[2]:.2f}</td>
+    <td>{recall[2]:.2f}</td><td>{fscore[2]:.2f}</td></tr>
+</table>
+<h2>Precautionary Measures</h2>
+<table><tr><th>Attack Type</th><th>Recommended Action</th></tr>
+{rows}</table>
+</body></html>"""
     with open("table.html", "w") as f:
-        f.write(output)
-
+        f.write(html)
     webbrowser.open("table.html", new=2)
 
-# GUI Setup
-bg_img = Image.open("image.jpg")  
-bg_img = bg_img.resize((1300, 1200), Image.LANCZOS)  
+
+# =============================================================
+#  GUI LAYOUT  —  all widgets fit inside 1300 x 950 px
+# =============================================================
+# Y positions (nothing goes below y=910):
+#   5   – title          (~70 px tall)
+#   80  – output text    (height=13 lines ≈ 210 px)
+#   300 – btn row 1      (~35 px)
+#   345 – btn row 2      (~35 px)
+#   395 – log header     (~25 px)
+#   425 – log text box   (height=8 lines ≈ 145 px)
+#   580 – 3 action btns  (~40 px)
+# =============================================================
+
+bg_img    = Image.open("image.jpg").resize((1300, 950), Image.LANCZOS)
 bg_img_tk = ImageTk.PhotoImage(bg_img)
-bg_label = Label(main, image=bg_img_tk)
+bg_label  = Label(main, image=bg_img_tk)
 bg_label.place(x=0, y=0, relwidth=1, relheight=1)
 
-font = ('times', 14, 'bold')
-title = Label(main, text='REAL-TIME CYBER THREAT DETECTION SYSTEM\nUsing Autoencoder, Random Forest and MLP')
-title.config(bg='greenyellow', fg='dodger blue')  
-title.config(font=font)           
-title.config(height=3, width=120)       
-title.place(x=0,y=5)
+main.geometry("1300x950")          # shrink window to match content
 
+font  = ('times', 14, 'bold')
 font1 = ('times', 12, 'bold')
-text=Text(main,height=20,width=150)
-scroll=Scrollbar(text)
+font2 = ('times', 11, 'bold')
+
+# ── Title ─────────────────────────────────────────────────────── y=5
+title = Label(main,
+              text='REAL-TIME CYBER THREAT DETECTION SYSTEM\n'
+                   'Using Autoencoder, Random Forest and MLP',
+              bg='greenyellow', fg='dodger blue', font=font,
+              height=2, width=140)
+title.place(x=0, y=5)
+
+# ── Main output text box ──────────────────────────────────────── y=75
+text = Text(main, height=13, width=152, font=font1)
+scroll = Scrollbar(main, orient=VERTICAL, command=text.yview)
 text.configure(yscrollcommand=scroll.set)
-text.place(x=50,y=120)
-text.config(font=font1)
+text.place(x=10, y=75)
+scroll.place(x=1281, y=75, height=215)
 
-# Add detection log display
-log_label = Label(main, text="Real-Time Detection Log", font=('times', 12, 'bold'))
-log_label.place(x=50, y=650)
+# ── Algorithm buttons – Row 1 ─────────────────────────────────── y=300
+Button(main, text="Upload Dataset",
+       command=uploadDataset, font=font2).place(x=10, y=300)
 
-log_text = Text(main, height=10, width=150)
-log_scroll = Scrollbar(log_text)
+Button(main, text="Preprocess Dataset",
+       command=preprocessing, font=font2).place(x=200, y=300)
+
+Button(main, text="Run AutoEncoder",
+       command=lambda: threading.Thread(
+           target=runAutoEncoder, daemon=True).start(),
+       font=font2).place(x=420, y=300)
+
+Button(main, text="Run Random Forest",
+       command=runRandomForest, font=font2).place(x=620, y=300)
+
+Button(main, text="Run MLP",
+       command=runMLP, font=font2).place(x=850, y=300)
+
+# ── Algorithm buttons – Row 2 ─────────────────────────────────── y=345
+Button(main, text="Detection & Attribute Attack Type",
+       command=attackAttributeDetection, font=font2).place(x=10, y=345)
+
+Button(main, text="Comparison Graph",
+       command=showGraphSelection, font=font2).place(x=420, y=345)
+
+Button(main, text="Comparison Table",
+       command=comparisonTable, font=font2).place(x=700, y=345)
+
+# ── Real-Time Detection Log header ────────────────────────────── y=395
+Label(main,
+      text="  ⚡ Real-Time Detection Log  —  threats show in RED, safe traffic in GREEN",
+      bg='#001133', fg='#00ccff',
+      font=('times', 11, 'bold'),
+      anchor='w', width=140).place(x=10, y=395)
+
+# ── Log text box ──────────────────────────────────────────────── y=425
+log_text = Text(main, height=8, width=152,
+                font=('Courier', 10),
+                bg='#050510', fg='#00ff88',
+                insertbackground='white',
+                relief=SUNKEN, bd=2,
+                state=DISABLED)
+log_scroll = Scrollbar(main, orient=VERTICAL, command=log_text.yview)
 log_text.configure(yscrollcommand=log_scroll.set)
-log_text.place(x=50, y=680)
-log_text.config(font=font1)
+log_text.place(x=10, y=425)
+log_scroll.place(x=1281, y=425, height=145)
 
-# Buttons for real-time monitoring
-monitor_button = Button(main, text="Start Monitoring", command=start_monitoring, bg='green', fg='white')
-monitor_button.place(x=50, y=850)
-monitor_button.config(font=font1)
+# ── Three action buttons ──────────────────────────────────────── y=580
+monitor_button = Button(main,
+                        text="▶  Start Monitoring",
+                        command=start_monitoring,
+                        font=('times', 12, 'bold'),
+                        bg='#007700', fg='white',
+                        width=20, relief=RAISED, bd=3)
+monitor_button.place(x=10, y=580)
 
-save_log_button = Button(main, text="Save Detection Log", command=save_detection_log)
-save_log_button.place(x=250, y=850)
-save_log_button.config(font=font1)
+Button(main,
+       text="💾  Save Detection Log",
+       command=save_detection_log,
+       font=('times', 12, 'bold'),
+       bg='#0055bb', fg='white',
+       width=20, relief=RAISED, bd=3).place(x=280, y=580)
 
-clear_log_button = Button(main, text="Clear Log", command=clear_detection_log)
-clear_log_button.place(x=450, y=850)
-clear_log_button.config(font=font1)
-
-# Original buttons
-font1 = ('times', 13, 'bold')
-uploadButton = Button(main, text="Upload Dataset", command=uploadDataset)
-uploadButton.place(x=50,y=550)
-uploadButton.config(font=font1)  
-
-processButton = Button(main, text="Preprocess Dataset", command=preprocessing)
-processButton.place(x=330,y=550)
-processButton.config(font=font1) 
-
-autoButton = Button(main, text="Run AutoEncoder Algorithm",
-                    command=lambda: threading.Thread(target=runAutoEncoder).start())
-autoButton.place(x=730,y=550)
-autoButton.config(font=font1)
-
-dtButton = Button(main, text="Run Random Forest", command=runRandomForest)
-dtButton.place(x=1030,y=550)
-dtButton.config(font=font1)
-
-dnnButton = Button(main, text="Run MLP", command=runMLP)
-dnnButton.place(x=50,y=600)
-dnnButton.config(font=font1)
-
-attributeButton = Button(main, text="Detection & Attribute Attack Type", command=attackAttributeDetection)
-attributeButton.place(x=330,y=600)
-attributeButton.config(font=font1) 
-
-graphButton = Button(main, text="Comparison Graph", command=showGraphSelection)
-graphButton.place(x=730,y=600)
-graphButton.config(font=font1)
-
-tableButton = Button(main, text="Comparison Table", command=comparisonTable)
-tableButton.place(x=1030,y=600)
-tableButton.config(font=font1)
+Button(main,
+       text="🗑  Clear Log",
+       command=clear_detection_log,
+       font=('times', 12, 'bold'),
+       bg='#994400', fg='white',
+       width=14, relief=RAISED, bd=3).place(x=550, y=580)
 
 main.mainloop()
